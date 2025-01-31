@@ -17,7 +17,7 @@ pipeline {
                 hostname
                 echo ${env.WORKSPACE}
                 """
-                git 'https://github.com/CristinaSanzPosadas/helloworld2.git'
+                git branch: 'feature_fix_coverage', url: 'https://github.com/CristinaSanzPosadas/helloworld2.git'
                 stash includes: '**', name: 'code'
             }
         }
