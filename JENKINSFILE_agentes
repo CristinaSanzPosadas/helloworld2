@@ -23,111 +23,178 @@ pipeline {
         }
         
         stage('Setup Virtual Environment') {
-            agent {label 'agent'}
-            steps {
-                bat """
-                whoami
-                hostname
-                echo ${env.WORKSPACE}
-                ${env.PYTHON_LOCAL} -m venv venv
-                venv\\Scripts\\pip install pytest flask flake8 bandit coverage
-                """
-                stash includes: 'venv/**', name: 'venv_agent'
-            }
-        }
-        stage('Tests') {
             parallel {
-                stage('Unit') {
+                stage('Venv agent') {
                     agent {label 'agent'}
                     steps {
-                        script {
-                            if (!fileExists("venv/Scripts/python.exe")) {
-                                unstash 'venv_agent'
-                            } else {
-                                echo "El entorno virtual venv_agent ya existe"
-                            }
-                        }
-                        unstash 'code' 
-                        catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
-                            echo 'Ejecutando pruebas unitarias'
-                            bat """
-                            whoami
-                            hostname
-                            echo ${env.WORKSPACE}
-                            venv\\Scripts\\python -m coverage run --source=app --omit=app\\__init__.py,app\\api.py -m pytest --junitxml=result-unit.xml test\\unit
-                            """
-                            junit '**/result-unit.xml'
-                        }
-                    }
-                }
-                stage('Rest') {
-                    agent {label 'agent'}
-                    steps {
-                        script {
-                            if (!fileExists("venv/Scripts/python.exe")) {
-                                unstash 'venv_agent'
-                            } else {
-                                echo "El entorno virtual venv_agent ya existe"
-                            }
-                        }
-                        unstash 'code' 
-                        catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
-                            echo 'Ejecutando pruebas de servicio'
-                            bat """
-                            whoami
-                            hostname
-                            echo ${env.WORKSPACE}
-                            set FLASK_APP=app.api:api_application
-                            start /B venv\\Scripts\\python -m flask run --port=5000
-                            for /L %%i in (1,1,10) do (
-                                netstat -an | findstr :5000 && exit 0 || ping -n 2 127.0.0.1 > nul
-                            )
-                            venv\\Scripts\\python -m pytest --junitxml=result-tests.xml test\\rest
-                            """
-                            junit '**/result-tests.xml'
-                        }
-                    }
-                }
-                stage('Static') {
-                    agent {label 'agent'}
-                    steps {
-                        script {
-                            unstash 'venv_agent'
-                            unstash 'code'
-                        }
                         bat """
                         whoami
                         hostname
                         echo ${env.WORKSPACE}
-                        echo 'Ejecutando análisis de código estático'
-                        venv\\Scripts\\flake8 --format=pylint app --exit-zero > flake8.out
+                        ${env.PYTHON_LOCAL} -m venv venv
+                        venv\\Scripts\\pip install pytest flask coverage
                         """
-                        script {
-                            echo "Resultados de flake8:"
-                            if (fileExists('flake8.out')) {
-                                catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
-                                    recordIssues tools: [
-                                        flake8(name: 'Flake8', pattern: 'flake8.out')
-                                    ], 
-                                    qualityGates: [
-                                        [threshold: 8, type: 'TOTAL', unstable: true],
-                                        [threshold: 10, type: 'TOTAL', unstable: false]
-                                    ]
+                        stash includes: 'venv/**', name: 'venv_agent'
+                    }
+                }
+                stage('Venv agent2') {
+                    agent {label 'agent2'}
+                    steps {
+                        bat """
+                        whoami
+                        hostname
+                        echo ${env.WORKSPACE}
+                        ${env.PYTHON_LOCAL} -m venv venv
+                        venv\\Scripts\\pip install flask flake8 bandit
+                        """
+                        stash includes: 'venv/**', name: 'venv_agent2'
+                    }
+                }
+            }
+        }
+
+        stage('Tests') {
+            stages ('Unit & Rest') {
+                stage ('Unit & Rest') {
+                    parallel {
+                        stage('Unit') {
+                            agent {label 'agent'}
+                            steps {
+                                script {
+                                    if (!fileExists("venv/Scripts/python.exe")) {
+                                        unstash 'venv_agent'
+                                    } else {
+                                        echo "El entorno virtual venv_agent ya existe"
+                                    }
                                 }
+                                unstash 'code' 
+                                catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
+                                    echo 'Ejecutando pruebas unitarias'
+                                    bat """
+                                    whoami
+                                    hostname
+                                    echo ${env.WORKSPACE}
+                                    venv\\Scripts\\python -m coverage run --source=app --omit=app\\__init__.py,app\\api.py -m pytest --junitxml=result-unit.xml test\\unit
+                                    """
+                                    junit '**/result-unit.xml'
+                                    stash includes: '*', name: 'results-pytest'
+                                }
+                            }
+                        }
+                        stage('Rest') {
+                            agent {label 'agent'}
+                            steps {
+                                script {
+                                    if (!fileExists("venv/Scripts/python.exe")) {
+                                        unstash 'venv_agent'
+                                    } else {
+                                        echo "El entorno virtual venv_agent ya existe"
+                                    }
+                                }
+                                unstash 'code' 
+                                catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
+                                    echo 'Ejecutando pruebas de servicio'
+                                    bat """
+                                    whoami
+                                    hostname
+                                    echo ${env.WORKSPACE}
+                                    set FLASK_APP=app.api:api_application
+                                    start /B venv\\Scripts\\python -m flask run --port=5000
+                                    for /L %%i in (1,1,10) do (
+                                        netstat -an | findstr :5000 && exit 0 || ping -n 2 127.0.0.1 > nul
+                                    )
+                                    venv\\Scripts\\python -m pytest --junitxml=result-tests.xml test\\rest
+                                    """
+                                    junit '**/result-tests.xml'
+                                }
+                            }
+                        }
+                    }
+                }
+                stage('Coverage') {
+                    agent {label 'agent'}
+                    steps {
+                        script {
+                            if (!fileExists("venv/Scripts/python.exe")) {
+                                unstash 'venv_agent'
                             } else {
-                                echo "No se encuentra el archivo flake8.out"
+                                echo "El entorno virtual venv_agent ya existe"
+                            }
+                        }
+                        unstash 'code'
+                        unstash 'results-pytest'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            bat """
+                            whoami
+                            hostname
+                            echo ${env.WORKSPACE}
+                            echo 'Ejecutando pruebas de cobertura'
+                            venv\\Scripts\\coverage report
+                            venv\\Scripts\\coverage xml
+                            """
+                            script {
+                                if (fileExists('coverage.xml')) {
+                                    echo "Resultados de coverage:"
+                                    cobertura coberturaReportFile: 'coverage.xml', onlyStable: false,
+                                    lineCoverageTargets: '95,85,0',
+                                    conditionalCoverageTargets: '90,80,0'
+                                } else {
+                                    echo "No se encuentra el archivo coverage.xml"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stage('Analyze') {
+            parallel {
+                 stage('Static') {
+                    agent {label 'agent2'}
+                    steps {
+                        script {
+                            if (!fileExists("venv/Scripts/python.exe")) {
+                                unstash 'venv_agent2'
+                            } else {
+                                echo "El entorno virtual venv_agent2 ya existe"
+                            }
+                        }
+                        unstash 'code'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            bat """
+                            whoami
+                            hostname
+                            echo ${env.WORKSPACE}
+                            echo 'Ejecutando análisis de código estático'
+                            venv\\Scripts\\flake8 --format=pylint app --exit-zero > flake8.out
+                            """
+                            script {
+                                echo "Resultados de flake8:"
+                                if (fileExists('flake8.out')) {
+                                    catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                                        recordIssues tools: [
+                                            flake8(name: 'Flake8', pattern: 'flake8.out')
+                                        ], 
+                                        qualityGates: [
+                                            [threshold: 8, type: 'TOTAL', unstable: true],
+                                            [threshold: 10, type: 'TOTAL', unstable: false] 
+                                        ]
+                                    }
+                                } else {
+                                    echo "No se encuentra el archivo flake8.out"
+                                }
                             }
                         }
                     }
                 }
                 stage('Security Test') {
-                    agent {label 'agent'}
+                    agent {label 'agent2'}
                     steps {
                         script {
                             if (!fileExists("venv/Scripts/python.exe")) {
-                                unstash 'venv_agent'
+                                unstash 'venv_agent2'
                             } else {
-                                echo "El entorno virtual venv_agent ya existe"
+                                echo "El entorno virtual venv_agent2 ya existe"
                             }
                         }
                         unstash 'code'
@@ -156,47 +223,14 @@ pipeline {
                         }
                     }
                 }
-                stage('Coverage') {
-                    agent {label 'agent'}
-                    steps {
-                        script {
-                            if (!fileExists("venv/Scripts/python.exe")) {
-                                unstash 'venv_agent'
-                            } else {
-                                echo "El entorno virtual venv_agent ya existe"
-                            }
-                        }
-                        unstash 'code'
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            bat """
-                            whoami
-                            hostname
-                            echo ${env.WORKSPACE}
-                            echo 'Ejecutando pruebas de cobertura'
-                            venv\\Scripts\\coverage report
-                            venv\\Scripts\\coverage xml
-                            """
-                            script {
-                                if (fileExists('coverage.xml')) {
-                                    echo "Resultados de coverage:"
-                                    cobertura coberturaReportFile: 'coverage.xml', onlyStable: false,
-                                    lineCoverageTargets: '95,85,0',
-                                    conditionalCoverageTargets: '90,80,0'
-                                } else {
-                                    echo "No se encuentra el archivo coverage.xml"
-                                }
-                            }
-                        }
-                    }
-                }
                 stage('Performance') {
-                    agent {label 'agent'}
+                    agent {label 'agent2'}
                     steps {
                         script {
                             if (!fileExists("venv/Scripts/python.exe")) {
-                                unstash 'venv_agent'
+                                unstash 'venv_agent2'
                             } else {
-                                echo "El entorno virtual venv_agent ya existe"
+                                echo "El entorno virtual venv_agent2 ya existe"
                             }
                         }
                         unstash 'code'
@@ -225,16 +259,34 @@ pipeline {
         }
 
         stage('Cleanup') {
-            agent {label 'agent'}
-            steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
-                    script {
-                        bat 'taskkill /f /im python.exe || echo "No Flask process running"'
+            parallel {
+                stage('Cleanup agent') {
+                    agent { label 'agent' }
+                    steps {
+                        catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
+                            script {
+                                bat 'taskkill /f /im python.exe || echo "No Flask process running"'
+                            }
+                        }
+                        script {
+                            echo "Cleaning workspace on agent"
+                            cleanWs()
+                        }
                     }
                 }
-                script {
-                    echo "Cleaning workspace on agent"
-                    cleanWs()
+                stage('Cleanup agent2') {
+                    agent { label 'agent2' }
+                    steps {
+                        catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
+                            script {
+                                bat 'taskkill /f /im python.exe || echo "No Flask process running"'
+                            }
+                        }
+                        script {
+                            echo "Cleaning workspace on agent2"
+                            cleanWs()
+                        }
+                    }
                 }
             }
         }
